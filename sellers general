@@ -1,0 +1,631 @@
+WITH fechas AS (
+  WITH a AS (
+      SELECT
+      DISTINCT f.fecha AS dia,
+      DATE_TRUNC(f.fecha, MONTH) AS mes,
+      DATE_TRUNC(f.fecha, WEEK(MONDAY)) AS semana,
+      CASE
+        WHEN DATE_TRUNC(f.fecha, WEEK(MONDAY))=DATE_TRUNC(CURRENT_DATE(),WEEK(MONDAY)) THEN DATE_TRUNC(f.fecha, WEEK(MONDAY))
+        WHEN DATE_TRUNC(f.fecha, WEEK(MONDAY))=DATE_SUB(DATE_TRUNC(CURRENT_DATE(),WEEK(MONDAY)),INTERVAL 1 WEEK) THEN DATE_TRUNC(f.fecha, WEEK(MONDAY))
+        WHEN DATE_TRUNC(f.fecha, MONTH)=DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) 
+          AND DATE_TRUNC(f.fecha, WEEK(MONDAY))=DATE_SUB(DATE_TRUNC(CURRENT_DATE(),WEEK(MONDAY)),INTERVAL 4 WEEK) THEN DATE_TRUNC(f.fecha, WEEK(MONDAY))
+      END AS periodo_de_tiempo
+
+      FROM `papyrus-data.habi_wh.fechas` AS f
+      WHERE f.fecha BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+      )
+
+      SELECT
+      *,
+      DENSE_RANK() OVER(PARTITION BY semana ORDER BY dia ASC) AS numero_dia_semana,
+      DENSE_RANK() OVER(PARTITION BY mes ORDER BY dia ASC) AS numero_dia_mes,
+      FROM a
+),
+
+areas_metropolitanas AS (
+  SELECT am.label AS area_metropolitana_1
+    FROM `papyrus-data.habi_wh.tabla_area_metropolitana` AS am
+    WHERE am.id IN (1,2,3,5,6,7,8,10)
+),
+
+paises AS (
+  SELECT 'Colombia' AS pais
+  UNION ALL SELECT 'México'
+),
+
+base AS (
+  SELECT *
+    FROM fechas
+    CROSS JOIN paises
+    -- CROSS JOIN areas_metropolitanas
+)
+
+## Empezamos a traer los KPI para cada área --
+
+-- SELLERS --
+
+-- 1. Inversión en Marketing --
+
+SELECT
+b.dia,
+b.semana,
+b.mes,
+b.numero_dia_semana,
+b.numero_dia_mes,
+b.pais,
+'sellers' AS infraestructura,
+'Inversión Marketing' AS kpi,
+IFNULL(a.inversion_total,0) AS valor
+
+FROM base AS b
+LEFT JOIN (
+  SELECT
+    SAFE_CAST(ic.date AS DATE) AS dia,
+    'Colombia' AS pais,
+    SUM(ic.spend) AS inversion_total,
+  FROM `papyrus-data.habi_wh_bi.resumen_inversiones_mkt_co` AS ic
+  GROUP BY 1
+
+  UNION ALL
+
+  SELECT
+    SAFE_CAST(im.date AS DATE) AS dia,
+    'México' AS pais,
+    SUM(im.spend),
+  FROM `papyrus-data-mx.habi_wh_bi.resumen_inversiones_mkt_mx`  AS im
+  GROUP BY 1
+) AS a ON a.dia=b.dia AND a.pais=b.pais
+
+UNION ALL  
+
+-- 2. Leads Calificados --
+
+SELECT
+b.dia,
+b.semana,
+b.mes,
+b.numero_dia_semana,
+b.numero_dia_mes,
+b.pais,
+'sellers',
+'Leads Calificados',
+IFNULL(a.calificados_total,0),
+FROM base AS b
+
+LEFT JOIN (
+  SELECT
+    SAFE_CAST(mc.fecha_a_pricing AS DATE) AS dia,
+    'Colombia' AS pais,
+    SUM(mc.check_registros_a_pricing) AS calificados_total,
+  FROM `papyrus-data.habi_wh_bi.tabla_general_mkt` AS mc
+  WHERE mc.fecha_a_pricing IS NOT NULL
+  GROUP BY 1
+
+  UNION ALL
+
+  SELECT
+    SAFE_CAST(mm.fecha_a_pricing AS DATE) AS dia,
+    'México' AS pais,
+    SUM(mm.check_registros_a_pricing) AS calificados_total,
+  FROM `papyrus-data-mx.habi_wh_bi.tabla_general_mkt` AS mm
+  GROUP BY 1
+) AS a ON a.dia=b.dia AND a.pais=b.pais
+
+UNION ALL
+
+-- 3. Leads Asignados --
+
+SELECT
+b.dia,
+b.semana,
+b.mes,
+b.numero_dia_semana,
+b.numero_dia_mes,
+b.pais,
+'sellers',
+'Leads asignados',
+IFNULL(a.asignados_total,0),
+
+FROM base AS b
+LEFT JOIN (
+  SELECT
+  SAFE_CAST(IF(
+        t1.primer_asignacion<IFNULL(g.fecha_primer_precio_manual,g.fecha_a_pricing),
+        IFNULL(g.fecha_primer_precio_manual,g.fecha_a_pricing),
+        t1.primer_asignacion) AS DATE) AS dia,
+  'Colombia' AS pais,
+  COUNT(g.nid) AS asignados_total,
+  FROM `papyrus-data-mx.habi_wh_bi.tabla_inmuebles_general` AS g
+  LEFT JOIN(
+    SELECT h.nid,
+      MIN(h.fecha) AS primer_asignacion
+    FROM `papyrus-master.squad_bi_global.hubspot_historical` AS h
+    LEFT JOIN `papyrus-data.habi_wh_bi.sc_users_hubspot` AS sc ON h.valor = CAST(sc.id_segundario AS STRING)
+    WHERE h.propiedad = "hubspot_owner_id"
+      AND (IFNULL(sc.email, h.valor) like "%habi.%" OR IFNULL(sc.email, h.valor) like "%tucanton.%")
+      AND IFNULL(sc.email, h.valor) not like "%delta%"
+      AND IFNULL(sc.email, h.valor) not like "%call%"
+      AND IFNULL(sc.email, h.valor) not like "%agente%"
+      AND IFNULL(sc.email, h.valor) not like "%victorialechtig@tuhabi.mx%"
+      AND IFNULL(sc.email, h.valor) not like "%erickcastillo@tuhabi.mx%"
+      AND IFNULL(sc.email, h.valor) not like "%alejandroaguirre@habi.co%"
+      AND IFNULL(sc.email, h.valor) not like "%luisalvarez@tuhabi.mx%"
+    GROUP BY 1) AS t1 ON t1.nid = g.nid
+  GROUP BY 1
+
+  UNION ALL
+
+  SELECT
+  SAFE_CAST(IF(
+        t1.primer_asignacion<IFNULL(g.fecha_primer_precio_manual,g.fecha_a_pricing),
+        IFNULL(g.fecha_primer_precio_manual,g.fecha_a_pricing),
+        t1.primer_asignacion) AS DATE) AS dia,
+  'México' AS pais,
+  COUNT(g.nid) AS calificados_total,
+  FROM `papyrus-data.habi_wh_bi.tabla_inmuebles_general` AS g
+  LEFT JOIN(
+    SELECT h.nid,
+      MIN(h.fecha) AS primer_asignacion
+    FROM `papyrus-master.squad_bi_global.hubspot_historical` AS h
+    LEFT JOIN `papyrus-data.habi_wh_bi.sc_users_hubspot` AS sc ON h.valor = CAST(sc.id_segundario AS STRING)
+    WHERE h.propiedad = "hubspot_owner_id"
+      AND (IFNULL(sc.email, h.valor) like "%habi.%" OR IFNULL(sc.email, h.valor) like "%tucanton.%")
+      AND IFNULL(sc.email, h.valor) not like "%delta%"
+      AND IFNULL(sc.email, h.valor) not like "%call%"
+      AND IFNULL(sc.email, h.valor) not like "%agente%"
+      AND IFNULL(sc.email, h.valor) not like "%victorialechtig@tuhabi.mx%"
+      AND IFNULL(sc.email, h.valor) not like "%erickcastillo@tuhabi.mx%"
+      AND IFNULL(sc.email, h.valor) not like "%alejandroaguirre@habi.co%"
+      AND IFNULL(sc.email, h.valor) not like "%luisalvarez@tuhabi.mx%"
+    GROUP BY 1) AS t1 ON t1.nid = g.nid
+  GROUP BY 1
+) AS a ON a.dia=b.dia AND a.pais=b.pais
+
+UNION ALL    
+
+-- 5. Ofertas aprobadas (inmubles aprobados)--
+
+SELECT
+b.dia,
+b.semana,
+b.mes,
+b.numero_dia_semana,
+b.numero_dia_mes,
+b.pais,
+'sellers',
+'Ofertas aprobadas',
+COUNT(DISTINCT a.valor)
+
+FROM base AS b
+LEFT JOIN (
+  SELECT 
+  DISTINCT
+  SAFE_CAST(fecha AS DATE) AS dia, 
+  'Colombia' AS pais, 
+  h.nid AS valor, 
+  FROM `papyrus-master.squad_bi_global.hubspot_historical`h
+  INNER JOIN `papyrus-data.habi_wh_bi.tabla_inmuebles_general` ig ON ig.nid= h.nid
+  WHERE propiedad = 'oportunidad_del_negocio'
+  AND lower(valor) = 'pendiente respuesta oferta'
+  AND SAFE_CAST(fecha AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+  GROUP BY 1,2,3
+
+  UNION ALL  
+
+  SELECT 
+  DISTINCT
+  SAFE_CAST(fecha AS DATE) AS dia, 
+  'México' AS pais, 
+  h.nid AS valor, 
+  FROM `papyrus-master.squad_bi_global.hubspot_historical`h
+  INNER JOIN `papyrus-data-mx.habi_wh_bi.tabla_inmuebles_general` ig ON ig.nid= h.nid
+  WHERE propiedad = 'oportunidades_de_negocio_'
+  AND lower(valor) = 'pendiente respuesta oferta'
+  AND SAFE_CAST(fecha AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+  GROUP BY 1,2,3
+) AS a ON a.dia=b.dia AND a.pais=b.pais
+GROUP BY 1,2,3,4,5,6
+
+UNION ALL   
+
+-- 6. Comités --
+
+SELECT
+b.dia,
+b.semana,
+b.mes,
+b.numero_dia_semana,
+b.numero_dia_mes,
+b.pais,
+'sellers',
+'Comités',
+COUNT(DISTINCT a.valor),
+
+FROM base AS b 
+LEFT JOIN (
+  SELECT 
+  DISTINCT
+  SAFE_CAST(fecha AS DATE) AS dia, 
+  'Colombia' AS pais, 
+  h.nid AS valor, 
+  FROM `papyrus-master.squad_bi_global.hubspot_historical`h
+  INNER JOIN `papyrus-data.habi_wh_bi.tabla_inmuebles_general` ig ON ig.nid= h.nid
+  WHERE propiedad = 'oportunidad_del_negocio'
+    AND lower(valor) IN ('aprobación comité final', 'aprobación comité  final')
+  AND SAFE_CAST(fecha AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+  GROUP BY 1,2,3
+
+  UNION ALL  
+
+  SELECT 
+  DISTINCT
+  SAFE_CAST(fecha AS DATE) AS dia, 
+  'México' AS pais, 
+  h.nid AS valor, 
+  FROM `papyrus-master.squad_bi_global.hubspot_historical`h
+  INNER JOIN `papyrus-data-mx.habi_wh_bi.tabla_inmuebles_general` ig ON ig.nid= h.nid
+  WHERE propiedad = 'oportunidades_de_negocio_'
+  AND lower(valor) IN ('aprobacion comite final', 'aprobación comité  final')
+  AND SAFE_CAST(fecha AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+  GROUP BY 1,2,3
+) AS a ON a.dia=b.dia AND a.pais=b.pais
+GROUP BY 1,2,3,4,5,6
+
+
+UNION ALL 
+
+-- 9. Compras Brutas
+
+SELECT 
+b.dia,
+b.semana,
+b.mes,
+b.numero_dia_semana,
+b.numero_dia_mes,
+b.pais,
+'sellers',
+'Compras Brutas',
+IFNULL(a.cierres_brutos,0),
+
+FROM base AS b
+LEFT JOIN (
+  SELECT
+  SAFE_CAST(cd.v_fecha_promesa AS DATE) AS dia,
+  'Colombia' AS pais,
+  COUNT(DISTINCT cd.nid) AS cierres_brutos
+  FROM `papyrus-master.operations_sellers_co_dwh.int_sellers_cierres_desistidos_co_dwh` as cd
+  GROUP BY 1
+
+  UNION ALL 
+
+  SELECT 
+  SAFE_CAST(cd.v_mes_dia_pre_cierre_y_cierre AS DATE) AS dia,
+  'México',
+  COUNT(DISTINCT cd.nid) AS cierres_brutos
+  FROM `papyrus-master.operations_sellers_mx_dwh.sellers_cierres_y_precierres_mx_dwh` cd
+  GROUP BY 1 
+) AS a ON a.dia=b.dia AND a.pais=b.pais
+
+UNION ALL 
+
+-- 10. Captaciones Brutas 
+
+SELECT
+b.dia,
+b.semana,
+b.mes,
+b.numero_dia_semana,
+b.numero_dia_mes,
+b.pais,
+'sellers',
+'Captaciones Brutas',
+IFNULL(a.captaciones_brutos,0),
+
+FROM base AS b 
+LEFT JOIN (
+  SELECT
+  SAFE_CAST(ic.v_fecha_captacion_inmobiliaria AS DATE) AS dia,
+  'Colombia' AS pais,
+  COUNT(DISTINCT ic.nid) AS captaciones_brutos
+  FROM `papyrus-master.operations_sellers_co_dwh.sellers_cierres_y_desistidos_captaciones_inmobiliaria_co_dwh` as ic
+  WHERE ic.categoria = "Captación normal"
+  GROUP BY 1
+
+  UNION ALL 
+
+  SELECT 
+  SAFE_CAST(ic.v_fecha_captacion AS DATE) AS dia,
+  'México',
+  COUNT(DISTINCT ic.nid) AS captaciones_brutos
+  FROM `papyrus-master.operations_buyers_inmobiliaria_mx_dwh.buyers_inmobiliaria_captaciones_cierres_desistidos_mx_dwh` as ic
+  GROUP BY 1 
+) AS a ON a.dia=b.dia AND a.pais=b.pais
+
+UNION ALL 
+
+-- 11. CPQL
+
+SELECT
+b.dia,
+b.semana,
+b.mes,
+b.numero_dia_semana,
+b.numero_dia_mes,
+b.pais,
+'sellers' AS infraestructura,
+'CPQL' AS kpi,
+SAFE_DIVIDE(a.inversion_total,c.calificados_total) AS valor
+
+FROM base AS b
+LEFT JOIN (
+  SELECT
+    SAFE_CAST(ic.date AS DATE) AS dia,
+    'Colombia' AS pais,
+    SUM(ic.spend) AS inversion_total,
+  FROM `papyrus-data.habi_wh_bi.resumen_inversiones_mkt_co` AS ic
+  GROUP BY 1
+
+  UNION ALL
+
+  SELECT
+    SAFE_CAST(im.date AS DATE) AS dia,
+    'México' AS pais,
+    SUM(im.spend),
+  FROM `papyrus-data-mx.habi_wh_bi.resumen_inversiones_mkt_mx`  AS im
+  GROUP BY 1
+) AS a ON a.dia=b.dia AND a.pais=b.pais
+LEFT JOIN (
+  SELECT
+    SAFE_CAST(mc.fecha_a_pricing AS DATE) AS dia,
+    'Colombia' AS pais,
+    SUM(mc.check_registros_a_pricing) AS calificados_total,
+  FROM `papyrus-data.habi_wh_bi.tabla_general_mkt` AS mc
+  WHERE mc.fecha_a_pricing IS NOT NULL
+  GROUP BY 1
+
+  UNION ALL
+
+  SELECT
+    SAFE_CAST(mm.fecha_a_pricing AS DATE) AS dia,
+    'México' AS pais,
+    SUM(mm.check_registros_a_pricing) AS calificados_total,
+  FROM `papyrus-data-mx.habi_wh_bi.tabla_general_mkt` AS mm
+  GROUP BY 1
+) AS c ON a.dia=c.dia AND a.pais=c.pais
+
+-- TRÁMITES SELLERS --
+
+-- 1. Escrituras totales
+
+UNION ALL 
+
+SELECT
+b.dia,
+b.semana,
+b.mes,
+b.numero_dia_semana,
+b.numero_dia_mes,
+b.pais,
+'tramites_sellers' AS infraestructura,
+'Escrituras totales Sellers' AS kpi,
+COUNT(DISTINCT a.nid)
+FROM base AS b
+LEFT JOIN (
+  SELECT
+  'Colombia' AS pais,
+  SAFE_CAST(bi.v_fecha_escritura AS DATE) AS dia,
+  bi.nid
+  FROM `papyrus-master.dm_habi_co_dwh_bi.operacion_general_co_bi` AS bi
+  WHERE SAFE_CAST(bi.v_fecha_escritura AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date()) 
+
+  UNION ALL  
+
+  SELECT
+  DISTINCT
+  'México' AS pais,
+  SAFE_CAST(v_fecha_poder_escritura AS DATE) AS dia,
+  bi.nid
+  FROM `papyrus-master.operations_sellers_mx_stg.stg_sellers_cierres_y_precierres_mx_dwh` AS bi
+  WHERE bi.v_nombre_fase_actual_pipe_poder_notarial_tramites IS NOT NULL
+  AND bi.v_nombre_fase_actual_pipe_poder_notarial_tramites<>'Desistimientos'
+  AND SAFE_CAST(v_fecha_poder_escritura AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())  
+) AS a ON a.dia=b.dia AND a.pais=b.pais
+GROUP BY 1,2,3,4,5,6,7
+
+UNION ALL 
+
+SELECT
+b.dia,
+b.semana,
+b.mes,
+b.numero_dia_semana,
+b.numero_dia_mes,
+b.pais,
+'tramites_sellers' AS infraestructura,
+'Escrituras esperadas' AS kpi,
+COUNT(DISTINCT a.nid)
+FROM base AS b
+LEFT JOIN (
+  SELECT
+  'Colombia' AS pais,
+  SAFE_CAST(bi.r_fecha_tentativa_escritura AS DATE) AS dia,
+  bi.nid
+  FROM `papyrus-master.dm_habi_co_dwh_bi.operacion_general_co_bi` AS bi
+  WHERE SAFE_CAST(bi.r_fecha_tentativa_escritura AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date()) 
+
+  UNION ALL      
+
+  SELECT
+  DISTINCT
+  'México' AS pais,
+  SAFE_CAST(bi.v_fecha_tentativa_de_escrituracion_interna AS DATE) AS dia,
+  bi.nid
+  FROM `papyrus-master.operations_sellers_mx_stg.stg_sellers_cierres_y_precierres_mx_dwh` AS bi
+  WHERE bi.v_nombre_fase_actual_pipe_poder_notarial_tramites IS NOT NULL
+  AND bi.v_nombre_fase_actual_pipe_poder_notarial_tramites<>'Desistimientos'
+  AND SAFE_CAST(bi.v_fecha_tentativa_de_escrituracion_interna AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date()) 
+) AS a ON a.dia=b.dia AND a.pais=b.pais
+GROUP BY 1,2,3,4,5,6,7
+
+UNION ALL 
+
+SELECT
+b.dia,
+b.semana,
+b.mes,
+b.numero_dia_semana,
+b.numero_dia_mes,
+b.pais,
+'tramites_sellers' AS infraestructura,
+'% Escrituras esperadas exitosas' AS kpi,
+COUNT(DISTINCT a.nid)
+FROM base AS b
+LEFT JOIN (
+  SELECT
+  'Colombia' AS pais,
+  bi.nid,
+  bi.v_fecha_promesa,
+  bi.r_fecha_tentativa_escritura,
+  bi.v_fecha_escritura AS dia,
+  FROM `papyrus-master.dm_habi_co_dwh_bi.operacion_general_co_bi` AS bi
+  WHERE  SAFE_CAST(bi.v_fecha_escritura  AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+
+  UNION ALL
+
+  SELECT
+  'México',
+  bi.nid,
+  SAFE_CAST(IFNULL(bi.v_fecha_de_asignacion_analista_tramites_historico,bi.v_ultima_fecha_de_asignacion_analista_tramites) AS DATE) AS fecha_de_asignacion_analista,
+  SAFE_CAST(bi.v_fecha_tentativa_de_escrituracion_interna AS DATE),
+  SAFE_CAST(bi.v_fecha_poder_escritura AS DATE),
+  FROM `papyrus-master.operations_sellers_mx_stg.stg_sellers_cierres_y_precierres_mx_dwh` AS bi
+  WHERE bi.v_nombre_fase_actual_pipe_poder_notarial_tramites IS NOT NULL
+  AND bi.v_nombre_fase_actual_pipe_poder_notarial_tramites<>'Desistimientos'
+  AND SAFE_CAST(bi.v_fecha_poder_escritura AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+) AS a ON a.dia=b.dia AND a.pais=b.pais
+WHERE DATE_TRUNC(a.v_fecha_promesa,MONTH) < b.mes
+  AND DATE_TRUNC(a.r_fecha_tentativa_escritura,MONTH) = b.mes
+  AND DATE_TRUNC(a.dia,MONTH) = b.mes
+GROUP BY 1,2,3,4,5,6,7
+
+UNION ALL 
+
+SELECT
+b.dia,
+b.semana,
+b.mes,
+b.numero_dia_semana,
+b.numero_dia_mes,
+b.pais,
+'tramites_sellers' AS infraestructura,
+'Escrituras vencidas realizadas' AS kpi,
+COUNT(DISTINCT a.nid)
+FROM base AS b
+LEFT JOIN (
+  SELECT
+  'Colombia' AS pais,
+  bi.nid,
+  bi.v_fecha_promesa,
+  bi.r_fecha_tentativa_escritura,
+  bi.v_fecha_escritura AS dia,
+  FROM `papyrus-master.dm_habi_co_dwh_bi.operacion_general_co_bi` AS bi
+  WHERE  SAFE_CAST(bi.v_fecha_escritura  AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+
+  UNION ALL
+
+  SELECT
+  'México',
+  bi.nid,
+  SAFE_CAST(IFNULL(bi.v_fecha_de_asignacion_analista_tramites_historico,bi.v_ultima_fecha_de_asignacion_analista_tramites) AS DATE) AS fecha_de_asignacion_analista,
+  SAFE_CAST(bi.v_fecha_tentativa_de_escrituracion_interna AS DATE),
+  SAFE_CAST(bi.v_fecha_poder_escritura AS DATE),
+  FROM `papyrus-master.operations_sellers_mx_stg.stg_sellers_cierres_y_precierres_mx_dwh` AS bi
+  WHERE bi.v_nombre_fase_actual_pipe_poder_notarial_tramites IS NOT NULL
+  AND bi.v_nombre_fase_actual_pipe_poder_notarial_tramites<>'Desistimientos'
+  AND SAFE_CAST(bi.v_fecha_poder_escritura AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+) AS a ON a.dia=b.dia AND a.pais=b.pais
+WHERE DATE_TRUNC(a.v_fecha_promesa,MONTH) < b.mes
+  AND DATE_TRUNC(a.r_fecha_tentativa_escritura,MONTH) < b.mes
+  AND DATE_TRUNC(a.dia,MONTH) = b.mes
+GROUP BY 1,2,3,4,5,6,7
+
+UNION ALL 
+
+SELECT
+b.dia,
+b.semana,
+b.mes,
+b.numero_dia_semana,
+b.numero_dia_mes,
+b.pais,
+'tramites_sellers' AS infraestructura,
+'Escrituras adelantadas' AS kpi,
+COUNT(DISTINCT a.nid)
+FROM base AS b
+LEFT JOIN (
+   SELECT
+  'Colombia' AS pais,
+  bi.nid,
+  bi.v_fecha_promesa,
+  bi.r_fecha_tentativa_escritura,
+  bi.v_fecha_escritura AS dia,
+  FROM `papyrus-master.dm_habi_co_dwh_bi.operacion_general_co_bi` AS bi
+  WHERE  SAFE_CAST(bi.v_fecha_escritura  AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+
+  UNION ALL
+
+  SELECT
+  'México',
+  bi.nid,
+  SAFE_CAST(IFNULL(bi.v_fecha_de_asignacion_analista_tramites_historico,bi.v_ultima_fecha_de_asignacion_analista_tramites) AS DATE) AS fecha_de_asignacion_analista,
+  SAFE_CAST(bi.v_fecha_tentativa_de_escrituracion_interna AS DATE),
+  SAFE_CAST(bi.v_fecha_poder_escritura AS DATE),
+  FROM `papyrus-master.operations_sellers_mx_stg.stg_sellers_cierres_y_precierres_mx_dwh` AS bi
+  WHERE bi.v_nombre_fase_actual_pipe_poder_notarial_tramites IS NOT NULL
+  AND bi.v_nombre_fase_actual_pipe_poder_notarial_tramites<>'Desistimientos'
+  AND SAFE_CAST(bi.v_fecha_poder_escritura AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+) AS a ON a.dia=b.dia AND a.pais=b.pais
+WHERE DATE_TRUNC(a.v_fecha_promesa,MONTH) < b.mes
+  AND DATE_TRUNC(a.r_fecha_tentativa_escritura,MONTH) > b.mes
+  AND DATE_TRUNC(a.dia,MONTH) = b.mes
+GROUP BY 1,2,3,4,5,6,7
+
+UNION ALL 
+
+SELECT
+b.dia,
+b.semana,
+b.mes,
+b.numero_dia_semana,
+b.numero_dia_mes,
+b.pais,
+'tramites_sellers' AS infraestructura,
+'Escrituras nuevas' AS kpi,
+COUNT(DISTINCT a.nid)
+FROM base AS b
+LEFT JOIN (
+   SELECT
+  'Colombia' AS pais,
+  bi.nid,
+  bi.v_fecha_promesa,
+  bi.r_fecha_tentativa_escritura,
+  bi.v_fecha_escritura AS dia,
+  FROM `papyrus-master.dm_habi_co_dwh_bi.operacion_general_co_bi` AS bi
+  WHERE  SAFE_CAST(bi.v_fecha_escritura  AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+
+  UNION ALL
+
+  SELECT
+  'México',
+  bi.nid,
+  SAFE_CAST(IFNULL(bi.v_fecha_de_asignacion_analista_tramites_historico,bi.v_ultima_fecha_de_asignacion_analista_tramites) AS DATE) AS fecha_de_asignacion_analista,
+  SAFE_CAST(bi.v_fecha_tentativa_de_escrituracion_interna AS DATE),
+  SAFE_CAST(bi.v_fecha_poder_escritura AS DATE),
+  FROM `papyrus-master.operations_sellers_mx_stg.stg_sellers_cierres_y_precierres_mx_dwh` AS bi
+  WHERE bi.v_nombre_fase_actual_pipe_poder_notarial_tramites IS NOT NULL
+  AND bi.v_nombre_fase_actual_pipe_poder_notarial_tramites<>'Desistimientos'
+  AND SAFE_CAST(bi.v_fecha_poder_escritura AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+) AS a ON a.dia=b.dia AND a.pais=b.pais
+WHERE DATE_TRUNC(a.v_fecha_promesa,MONTH) = b.mes
+  AND DATE_TRUNC(a.dia,MONTH) = b.mes
+GROUP BY 1,2,3,4,5,6,7

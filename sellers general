@@ -103,12 +103,20 @@ LEFT JOIN (
 
   UNION ALL
 
+--27/11/2023--> Para mexico solo se dejan las fuentes de WEB y LEADFORMS
+
   SELECT
     SAFE_CAST(mm.fecha_a_pricing AS DATE) AS dia,
     'México' AS pais,
     SUM(mm.check_registros_a_pricing) AS calificados_total,
   FROM `papyrus-data-mx.habi_wh_bi.tabla_general_mkt` AS mm
-  GROUP BY 1
+  LEFT JOIN `papyrus-data-mx.habi_wh_bi.tabla_inmuebles_general` AS g ON mm.id_inmueble = g.id_inmueble
+
+   WHERE
+    g.fuente_id IN (3,47,37,41)
+    AND mm.fecha_a_pricing is not null
+
+  GROUP BY 1,2
 ) AS a ON a.dia=b.dia AND a.pais=b.pais
 
 UNION ALL
@@ -251,7 +259,8 @@ LEFT JOIN (
   FROM `papyrus-master.squad_bi_global.hubspot_historical`h
   INNER JOIN `papyrus-data.habi_wh_bi.tabla_inmuebles_general` ig ON ig.nid= h.nid
   WHERE propiedad = 'oportunidad_del_negocio'
-    AND lower(valor) IN ('aprobación comité final', 'aprobación comité  final')
+    AND LOWER(valor)IN ('pre-comite', 'pre-comité')
+    -- AND lower(valor) IN ('aprobación comité final', 'aprobación comité  final')
   AND SAFE_CAST(fecha AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
   GROUP BY 1,2,3
 
@@ -265,7 +274,8 @@ LEFT JOIN (
   FROM `papyrus-master.squad_bi_global.hubspot_historical`h
   INNER JOIN `papyrus-data-mx.habi_wh_bi.tabla_inmuebles_general` ig ON ig.nid= h.nid
   WHERE propiedad = 'oportunidades_de_negocio_'
-  AND lower(valor) IN ('aprobacion comite final', 'aprobación comité  final')
+  AND LOWER(valor)IN ('pre-comite', 'pre-comité')
+  -- AND lower(valor) IN ('aprobacion comite final', 'aprobación comité  final')
   AND SAFE_CAST(fecha AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
   GROUP BY 1,2,3
 ) AS a ON a.dia=b.dia AND a.pais=b.pais
@@ -328,7 +338,7 @@ LEFT JOIN (
   'Colombia' AS pais,
   COUNT(DISTINCT ic.nid) AS captaciones_brutos
   FROM `papyrus-master.operations_sellers_co_dwh.sellers_cierres_y_desistidos_captaciones_inmobiliaria_co_dwh` as ic
-  WHERE ic.categoria = "Captación normal"
+  -- WHERE ic.categoria = "Captación normal"
   GROUP BY 1
 
   UNION ALL 
@@ -340,6 +350,63 @@ LEFT JOIN (
   FROM `papyrus-master.operations_buyers_inmobiliaria_mx_dwh.buyers_inmobiliaria_captaciones_cierres_desistidos_mx_dwh` as ic
   GROUP BY 1 
 ) AS a ON a.dia=b.dia AND a.pais=b.pais
+
+--- CAPTACIONES AUTOMATICAS  COLOMBIA
+UNION ALL
+
+SELECT
+  b.dia,
+  b.semana,
+  b.mes,
+  b.numero_dia_semana,
+  b.numero_dia_mes,
+  b.pais,
+  'sellers',
+  categoria,
+  COUNT(DISTINCT nid)
+FROM
+base AS b
+LEFT JOIN (
+  SELECT
+    DATE(v_fecha_captacion_inmobiliaria) AS dia,
+    categoria,
+    nid,
+    'Colombia' AS pais
+  FROM
+    `papyrus-master.operations_sellers_co_dwh.sellers_cierres_y_desistidos_captaciones_inmobiliaria_co_dwh` 
+    
+) AS a ON a.dia=b.dia AND a.pais=b.pais
+GROUP BY 1,2,3,4,5,6,7,8
+
+UNION ALL 
+---CAPTACIONES EQUIPO ESPECIAL MEXICO
+SELECT
+  b.dia,
+  b.semana,
+  b.mes,
+  b.numero_dia_semana,
+  b.numero_dia_mes,
+  b.pais,
+  'sellers',
+  'captaciones equipo 100',
+  COUNT(DISTINCT a.nid) AS captaciones_brutos
+
+FROM base AS b
+LEFT JOIN  `papyrus-master.operations_buyers_inmobiliaria_mx_dwh.buyers_inmobiliaria_captaciones_cierres_desistidos_mx_dwh` as a ON DATE(v_fecha_captacion)=b.dia
+    WHERE
+    LOWER(v_comercial) IN (
+                            'arturohernandezp@tuhabi.mx',
+                            'violetasanchez@tuhabi.mx',
+                            'edsoncarrillo@tuhabi.mx',
+                            'anarobles@tuhabi.mx',
+                            'jonathangomez@tuhabi.mx',
+                            'rodolfocondado@tuhabi.mx',
+                            'mariafernandez@tuhabi.mx',
+                            'luismontano@tuhabi.mx'
+    )
+  AND LOWER(pais)!='colombia'
+  GROUP BY 1,2,3,4,5,6,7,8 
+
 
 UNION ALL 
 
@@ -629,3 +696,396 @@ LEFT JOIN (
 WHERE DATE_TRUNC(a.v_fecha_promesa,MONTH) = b.mes
   AND DATE_TRUNC(a.dia,MONTH) = b.mes
 GROUP BY 1,2,3,4,5,6,7
+
+UNION ALL
+
+# interesados inmobiliaria
+## se revisa junto con el BI de la infra, se va a cambiar la forma en que se cuenta  un interesado, siendo la primera fecha que ingreso en interesado en adelante
+
+SELECT
+b.dia,
+b.semana,
+b.mes,
+b.numero_dia_semana,
+b.numero_dia_mes,
+b.pais,
+'sellers',
+'Interesados',
+COUNT(DISTINCT a.nid)
+FROM
+base AS b
+LEFT JOIN (
+WITH glosario as (
+  select "No gestionado" as etapa , 31701266 as etapa_id, 1 as id
+  union all select "Interesado" , 31701267, 2
+  union all select "Volver a llamar" , 31701268, 3
+  union all select "Revisión de documentos" , 51415352, 4
+  union all select "Pricing" , 31708824, 5
+  union all select "Aprobación comité" , 50879892, 6
+  union all select "Inmueble aprobado" , 51423367, 7
+  union all select "Captado" , 31701269, 8
+  union all select "Fotos" , 31701270, 9
+  union all select "Win" , 31701271, 10
+  union all select "Lost" , 31701272, 11
+  union all select "Descartados" , 66309297, 12
+  union all select "Corrección Documentos" , 70915160, 13
+  union all select "Aceptó Oferta" , 75775297, 14
+  union all select "No Contesta" , 80723044, 15
+),
+
+  propietarios as  (
+  SELECT
+    DISTINCT 
+    hd.nid,
+    LOWER(TRIM(COALESCE(
+      IF(REGEXP_CONTAINS(hd.hubspot_owner_id, r'@'), hd.hubspot_owner_id, NULL)
+      , u.email
+      , u2.email))) AS hubspot_owner_id,
+    
+    hd.oportunidades_de_negocio_ AS oportunidad_del_negocio,
+    DATE_SUB(hd.closedate, INTERVAL 5 HOUR) AS v_fecha_cierre_hubspot,
+
+    FROM `papyrus-master.squad_bi_global.hubspot_deal` AS hd
+    LEFT JOIN `papyrus-data.habi_wh_bi.hubspot_users_v2` AS u ON u.id = hd.hubspot_owner_id
+    LEFT JOIN `papyrus-data.habi_wh_bi.hubspot_users_v2` AS u2 ON u.id_usuario = hd.hubspot_owner_id
+  )
+
+  SELECT 
+      hh.nid as nid,
+      datetime(hh.fecha) as dia,
+      g.etapa as gestiones,
+      'México' as pais
+
+
+from  
+      `papyrus-master.squad_bi_global.hubspot_historical` as hh
+left join 
+      `papyrus-master.squad_bi_global.hubspot_deal` as h on h.nid = hh.nid
+left join 
+      `papyrus-data-mx.habi_wh_bi.tabla_inmuebles_general` as ig on ig.nid = hh.nid
+Left join
+      glosario as g ON g.etapa_id = safe_cast(hh.valor as int64)
+left join propietarios as p on p.nid = hh.nid
+left join `papyrus-master.operations_buyers_inmobiliaria_mx_dwh.buyers_inmobiliaria_captaciones_cierres_desistidos_mx_dwh` as c on c.nid = hh.nid
+
+where 
+      hh.propiedad = "dealstage"
+      and hh.fecha >= "2022-01-01"
+      and hh.valor in ("31701266","31701267","31701268","51415352","31708824","50879892","51423367","31701269","31701270","31701271","31701272","66309297", "70915160", "75775297", "80723044")
+      AND g.etapa IN (
+                        'Interesado',
+                        'Revisión de documentos',
+                        'Pricing',
+                        'Aprobación comité',
+                        'Inmueble aprobado',
+                        'Captado',
+                        'Aceptó Oferta',
+                        'Corrección Documentos',
+                        'Win',
+                        'Fotos'
+                        )
+      
+QUALIFY ROW_NUMBER() OVER(PARTITION BY hh.nid,DATE_TRUNC(DATE(hh.fecha),MONTH) ORDER BY  DATE(hh.fecha) ASC)=1
+
+UNION ALL
+
+SELECT
+    a.nid,
+    DATE(a.fecha) AS dia,
+    categoria,
+    'Colombia' AS pais,
+FROM
+`papyrus-data.habi_wh_inmobiliaria.habiinmobiliaria_sellers_gestion` AS a
+WHERE 
+categoria='Interesados'
+
+
+) AS a ON DATE(b.dia)=DATE(a.dia) AND LOWER(a.pais)=LOWER(b.pais)
+
+WHERE 1=1
+GROUP BY 1,2,3,4,5,6,7,8
+
+UNION ALL
+
+##---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#                  CVR OFERTAS CIERRES- TABLERO--> https://lookerstudio.google.com/s/pUWxkmhR634
+##---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+SELECT
+b.dia,
+b.semana,
+b.mes,
+b.numero_dia_semana,
+b.numero_dia_mes,
+b.pais,
+'sellers' AS infraestructura,
+CONCAT('CVR ofertas_cierres_',estado_aprobado) AS kpi,
+total-IF(ROW_NUMBER() OVER(PARTITION BY b.mes,b.pais,a.estado_aprobado ORDER BY b.dia ASC)=1,0,total_anterior)
+FROM base AS b
+INNER JOIN(
+### COLOMBIA
+with colombia_cvr_o_c AS (
+WITH aprobados AS (
+    SELECT nid,
+        fecha AS fecha_aprobado
+    FROM `papyrus-master.squad_bi_global.hubspot_historical`
+    WHERE propiedad = 'oportunidad_del_negocio'
+        AND LOWER(REGEXP_REPLACE(valor, r'[^\w]', ''))= 'inmuebleaprobado'
+        AND nid IS NOT NULL
+        AND fecha IS NOT NULL
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY DATE_TRUNC(fecha,DAY),nid ORDER BY fecha) = 1
+),
+cierres AS (
+    SELECT nid, DATETIME_SUB(closedate, INTERVAL 5 HOUR) AS fecha_cierre
+    FROM `papyrus-master.squad_bi_global.hubspot_deal`
+    WHERE nid IS NOT NULL 
+        AND closedate IS NOT NULL
+        AND LOWER(TRIM(oportunidad_del_negocio)) = 'cierre - comprado'
+        AND pipeline = '1679217'
+),
+aprobados_cierres AS (
+    SELECT nid,
+        CASE
+        WHEN fecha_cierre IS NULL THEN fecha_aprobado
+        WHEN DATE_TRUNC(fecha_cierre,DAY) < DATE_TRUNC(fecha_aprobado,DAY) THEN fecha_cierre
+        ELSE fecha_aprobado
+        END AS fecha_aprobado,
+        fecha_cierre
+    FROM(
+        SELECT IFNULL(aprobados.nid,cierres.nid) AS nid,
+        IFNULL(aprobados.fecha_aprobado,cierres.fecha_cierre) AS fecha_aprobado,
+        CASE
+            WHEN cierres.fecha_cierre IS NULL THEN NULL
+            WHEN aprobados.fecha_aprobado IS NULL AND cierres.fecha_cierre IS NOT NULL THEN cierres.fecha_cierre
+            WHEN DATE_TRUNC(cierres.fecha_cierre,DAY) < DATE_TRUNC(aprobados.fecha_aprobado,DAY) 
+            AND ROW_NUMBER() OVER (
+                PARTITION BY aprobados.nid 
+                ORDER BY aprobados.fecha_aprobado) > 1 THEN NULL
+            WHEN DATE_TRUNC(cierres.fecha_cierre,DAY) < DATE_TRUNC(aprobados.fecha_aprobado,DAY) 
+            AND ROW_NUMBER() OVER (
+                PARTITION BY aprobados.nid 
+                ORDER BY aprobados.fecha_aprobado) = 1 THEN cierres.fecha_cierre
+            WHEN ROW_NUMBER() OVER (
+            PARTITION BY DATE_TRUNC(cierres.fecha_cierre,DAY) >= DATE_TRUNC(aprobados.fecha_aprobado,DAY),aprobados.nid 
+            ORDER BY aprobados.fecha_aprobado DESC) = 1 THEN cierres.fecha_cierre
+            ELSE NULL
+        END AS fecha_cierre
+        FROM aprobados 
+        FULL OUTER JOIN cierres ON cierres.nid = aprobados.nid
+    )
+),
+base AS (
+  SELECT c.nid,
+  	h.createdate AS fecha_creacion,
+    c.fecha_aprobado,
+    -- IFNULL(h.habi_es_habi__,'no') AS flag_hesh,
+    c.fecha_cierre,
+    LOWER(TRIM(h.oportunidad_del_negocio)) AS oportunidad_de_negocio,
+    CASE
+        WHEN ROW_NUMBER() OVER (PARTITION BY c.nid ORDER BY c.fecha_aprobado DESC) > 1 THEN 'rechazado'
+        WHEN c.fecha_cierre IS NOT NULL THEN 'aceptado'
+        WHEN LOWER(TRIM(h.oportunidad_del_negocio)) IN ('inmueble aprobado','pendiente respuesta oferta','aceptó oferta - pendiente firma') THEN 'pendiente'
+        WHEN DATE_TRUNC(c.fecha_aprobado, MONTH) = '2023-10-01' AND c.nid IN (13693251849,15272797323,15151459089,15020254248,14996171293,14729675702,13283786527,8848067075,12564336552,15113625892,14434173295,15348710034,15280423265,15239189100,15087651438,15083045786,15007811126,14984015116,14974878025,14800101237,14796272762,14763606439,14726087842,14397719325,13691042130,15232924968,14622277668,12026475960,10222601874,8737605455,15260381523,15155927716,14484309047,15226093936,14834574197,14597088094,13293748561,15235707929,14925954418,7657117197,14724464743,10198762094,14795631212,15173728289,14721896816,14021967728,14621916954,15318188389,15368700041,15298592318,15170551691,15143513155,15139155519,15127198242,15127566448,14980080825,14952186220,14895961240,14837448086,14793566777,14747948667,14737148832,14618150268,14602384737,14575995158,14567717041,14535353256,14506703898,14388571162,14036004434,12334968130,9461035784,8651573403,15127667226,14982948400,14955404934,14879660802,14726597421,14614156296,13594498620,13465916015,4861784142,15108409492,14998321499,14533647148,14403169200,10724527648,15143884188,15134735257,15058882170,14986516859,14967906592,14854668669,14798850693,14747394955,14419310922,14302370906,14062489159,13491215508,12313646855,10486995585,8881705092,14895206777,14885548165,13526963460,15358858833,15180158241,15170325938,15052621368,14983967119,14866439071,14782240084,14782505081,14523764126,14457058096,14270070572,14183900831,13691003716,13256887988,13194451741,5792761988,12466609296,12074002179,15139473469,15111962550,8254773622,15072710416,14648649884,14471678898,14341846455,14285379895,14258345303,14232002585,12715765924,9496229214) AND LOWER(TRIM(h.oportunidad_del_negocio)) = 'descartado' THEN 'pendiente' 
+        ELSE 'rechazado'
+    END AS estado_aprobado,
+    ROW_NUMBER() OVER (PARTITION BY c.nid ORDER BY c.fecha_aprobado) AS orden_ascendente,
+    IF(DATE_TRUNC(c.fecha_aprobado, MONTH) = '2023-10-01' AND c.nid IN (13693251849,15272797323,15151459089,15020254248,14996171293,14729675702,13283786527,8848067075,12564336552,15113625892,14434173295,15348710034,15280423265,15239189100,15087651438,15083045786,15007811126,14984015116,14974878025,14800101237,14796272762,14763606439,14726087842,14397719325,13691042130,15232924968,14622277668,12026475960,10222601874,8737605455,15260381523,15155927716,14484309047,15226093936,14834574197,14597088094,13293748561,15235707929,14925954418,7657117197,14724464743,10198762094,14795631212,15173728289,14721896816,14021967728,14621916954,15318188389,15368700041,15298592318,15170551691,15143513155,15139155519,15127198242,15127566448,14980080825,14952186220,14895961240,14837448086,14793566777,14747948667,14737148832,14618150268,14602384737,14575995158,14567717041,14535353256,14506703898,14388571162,14036004434,12334968130,9461035784,8651573403,15127667226,14982948400,14955404934,14879660802,14726597421,14614156296,13594498620,13465916015,4861784142,15108409492,14998321499,14533647148,14403169200,10724527648,15143884188,15134735257,15058882170,14986516859,14967906592,14854668669,14798850693,14747394955,14419310922,14302370906,14062489159,13491215508,12313646855,10486995585,8881705092,14895206777,14885548165,13526963460,15358858833,15180158241,15170325938,15052621368,14983967119,14866439071,14782240084,14782505081,14523764126,14457058096,14270070572,14183900831,13691003716,13256887988,13194451741,5792761988,12466609296,12074002179,15139473469,15111962550,8254773622,15072710416,14648649884,14471678898,14341846455,14285379895,14258345303,14232002585,12715765924,9496229214),1,0) AS flag_regestion_oct
+  FROM aprobados_cierres AS c
+  LEFT JOIN `papyrus-master.squad_bi_global.hubspot_deal` AS h ON h.nid = c.nid
+),
+base_rechazos AS (
+    SELECT base.*,
+        hh.* EXCEPT(nid),
+        IFNULL(IF(base.estado_aprobado='rechazado',IFNULL(hh.fecha,base.fecha_aprobado),NULL),base.fecha_cierre) AS fecha_respuesta,
+        IF(base.estado_aprobado='rechazado',IFNULL(hh.fecha,base.fecha_aprobado),NULL) AS fecha_rechazo,
+        DATE_DIFF(
+        IFNULL(IF(base.estado_aprobado='rechazado',IFNULL(hh.fecha,base.fecha_aprobado),NULL),IF(base.estado_aprobado='pendiente',CURRENT_DATETIME('-05'),base.fecha_cierre)), 
+        DATE_TRUNC(base.fecha_aprobado, MONTH), 
+        DAY)+1 AS dias_respuesta_oferta,
+    FROM base
+    LEFT JOIN (
+        SELECT nid, valor AS oportunidad_del_negocio, fecha
+        FROM `papyrus-master.squad_bi_global.hubspot_historical`
+        WHERE propiedad = 'oportunidad_del_negocio'
+            AND LOWER(TRIM(valor)) NOT IN ('inmueble aprobado','pendiente respuesta oferta','aceptó oferta - pendiente firma','cierre - comprado')
+            AND NOT (
+              DATE_TRUNC(fecha, MONTH) = '2023-10-01' AND nid IN (13693251849,15272797323,15151459089,15020254248,14996171293,14729675702,13283786527,8848067075,12564336552,15113625892,14434173295,15348710034,15280423265,15239189100,15087651438,15083045786,15007811126,14984015116,14974878025,14800101237,14796272762,14763606439,14726087842,14397719325,13691042130,15232924968,14622277668,12026475960,10222601874,8737605455,15260381523,15155927716,14484309047,15226093936,14834574197,14597088094,13293748561,15235707929,14925954418,7657117197,14724464743,10198762094,14795631212,15173728289,14721896816,14021967728,14621916954,15318188389,15368700041,15298592318,15170551691,15143513155,15139155519,15127198242,15127566448,14980080825,14952186220,14895961240,14837448086,14793566777,14747948667,14737148832,14618150268,14602384737,14575995158,14567717041,14535353256,14506703898,14388571162,14036004434,12334968130,9461035784,8651573403,15127667226,14982948400,14955404934,14879660802,14726597421,14614156296,13594498620,13465916015,4861784142,15108409492,14998321499,14533647148,14403169200,10724527648,15143884188,15134735257,15058882170,14986516859,14967906592,14854668669,14798850693,14747394955,14419310922,14302370906,14062489159,13491215508,12313646855,10486995585,8881705092,14895206777,14885548165,13526963460,15358858833,15180158241,15170325938,15052621368,14983967119,14866439071,14782240084,14782505081,14523764126,14457058096,14270070572,14183900831,13691003716,13256887988,13194451741,5792761988,12466609296,12074002179,15139473469,15111962550,8254773622,15072710416,14648649884,14471678898,14341846455,14285379895,14258345303,14232002585,12715765924,9496229214) AND LOWER(TRIM(valor)) = 'descartado')
+            AND nid IS NOT NULL
+            AND valor IS NOT NULL
+            AND fecha IS NOT NULL
+    ) hh ON hh.nid = base.nid AND hh.fecha >= base.fecha_aprobado
+    WHERE TRUE
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY base.fecha_aprobado,base.nid ORDER BY IF(base.estado_aprobado='rechazado',IFNULL(hh.fecha,base.fecha_aprobado),base.fecha_aprobado)) = 1
+),
+base_fechas AS (
+    SELECT 
+    DISTINCT 
+    SAFE_CAST(concat(EXTRACT(YEAR FROM fecha_aprobado),"-",EXTRACT(MONTH FROM fecha_aprobado),"-",dias_respuesta_oferta) AS DATE) AS fecha_cal,
+    DATE_TRUNC(fecha_aprobado, MONTH) AS mes,
+    -- DATE_TRUNC(fecha_aprobado, MONTH) AS dia_1,  
+    dias_respuesta_oferta AS dia
+    FROM base_rechazos
+)
+    SELECT 
+        'Colombia' as pais,
+        *
+    FROM base_fechas AS bf
+    INNER JOIN base_rechazos AS br ON DATE_TRUNC(br.fecha_aprobado, MONTH) = bf.mes AND br.dias_respuesta_oferta <= bf.dia
+    WHERE TRUE
+   AND bf.mes BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY bf.mes,bf.dia, br.nid ORDER BY br.dias_respuesta_oferta DESC) = 1
+)
+
+#### MEXICO
+,mexico_cvr_o_c AS (
+WITH aprobados AS (
+  SELECT 
+    nid,
+    fecha AS fecha_aprobado
+  FROM `papyrus-master.squad_bi_global.hubspot_historical`
+  WHERE propiedad = 'oportunidades_de_negocio_'
+    AND LOWER(REGEXP_REPLACE(valor, r'[^\w]', ''))= 'inmuebleaprobado'
+    AND nid IS NOT NULL
+    AND fecha IS NOT NULL
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY DATE_TRUNC(fecha,DAY),nid ORDER BY fecha) = 1
+),
+cierres AS (
+  SELECT nid, DATETIME_SUB(closedate, INTERVAL 5 HOUR) AS fecha_cierre
+  FROM `papyrus-master.squad_bi_global.hubspot_deal`
+  WHERE nid IS NOT NULL 
+    AND closedate IS NOT NULL
+    AND LOWER(TRIM(oportunidades_de_negocio_)) = 'cierre - comprado'
+),
+aprobados_cierres AS (
+  SELECT nid,
+    CASE
+      WHEN fecha_cierre IS NULL THEN fecha_aprobado
+      WHEN DATE_TRUNC(fecha_cierre,DAY) < DATE_TRUNC(fecha_aprobado,DAY) THEN fecha_cierre
+      ELSE fecha_aprobado
+    END AS fecha_aprobado,
+    fecha_cierre
+  FROM(
+    SELECT IFNULL(aprobados.nid,cierres.nid) AS nid,
+      IFNULL(aprobados.fecha_aprobado,cierres.fecha_cierre) AS fecha_aprobado,
+      CASE
+        WHEN cierres.fecha_cierre IS NULL THEN NULL
+        WHEN aprobados.fecha_aprobado IS NULL AND cierres.fecha_cierre IS NOT NULL THEN cierres.fecha_cierre
+        WHEN DATE_TRUNC(cierres.fecha_cierre,DAY) < DATE_TRUNC(aprobados.fecha_aprobado,DAY) 
+          AND ROW_NUMBER() OVER (
+            PARTITION BY aprobados.nid 
+            ORDER BY aprobados.fecha_aprobado) > 1 THEN NULL
+        WHEN DATE_TRUNC(cierres.fecha_cierre,DAY) < DATE_TRUNC(aprobados.fecha_aprobado,DAY) 
+          AND ROW_NUMBER() OVER (
+            PARTITION BY aprobados.nid 
+            ORDER BY aprobados.fecha_aprobado) = 1 THEN cierres.fecha_cierre
+        WHEN ROW_NUMBER() OVER (
+          PARTITION BY DATE_TRUNC(cierres.fecha_cierre,DAY) >= DATE_TRUNC(aprobados.fecha_aprobado,DAY),aprobados.nid 
+          ORDER BY aprobados.fecha_aprobado DESC) = 1 THEN cierres.fecha_cierre
+        ELSE NULL
+      END AS fecha_cierre
+    FROM aprobados 
+    FULL OUTER JOIN cierres ON cierres.nid = aprobados.nid
+  )
+),
+base AS (
+  SELECT c.nid,
+  	h.createdate AS fecha_creacion,
+    c.fecha_aprobado,
+	-- IFNULL(h.flag_precio_comite_hesh,0) AS flag_hesh,
+    c.fecha_cierre,
+	LOWER(TRIM(h.oportunidades_de_negocio_)) AS oportunidad_de_negocio,
+    CASE
+      WHEN ROW_NUMBER() OVER (PARTITION BY c.nid ORDER BY c.fecha_aprobado DESC) > 1 THEN 'rechazado'
+	  WHEN c.fecha_cierre IS NOT NULL THEN 'aceptado'											   
+      WHEN LOWER(TRIM(h.oportunidades_de_negocio_)) IN ('inmueble aprobado','pendiente respuesta oferta','acepto oferta - pendiente firma') THEN 'pendiente'
+      ELSE 'rechazado'
+    END AS estado_aprobado,
+    -- ROW_NUMBER() OVER (PARTITION BY c.nid ORDER BY c.fecha_aprobado) AS orden_ascendente
+    NULL,
+    RANK() OVER (PARTITION BY c.nid ORDER BY DATE_TRUNC(c.fecha_aprobado, MONTH)) AS orden_ascendente
+  FROM aprobados_cierres AS c
+  LEFT JOIN `papyrus-master.squad_bi_global.hubspot_deal` AS h ON h.nid = c.nid
+),
+base_rechazos AS (
+  SELECT base.*,
+	hh.* EXCEPT(nid),					 
+    IFNULL(IF(base.estado_aprobado='rechazado',IFNULL(hh.fecha,base.fecha_aprobado),NULL),base.fecha_cierre) AS fecha_respuesta,
+    IF(base.estado_aprobado='rechazado',IFNULL(hh.fecha,base.fecha_aprobado),NULL) AS fecha_rechazo,
+
+    DATE_DIFF(
+      IFNULL(
+        IF(base.estado_aprobado='rechazado',IFNULL(hh.fecha,base.fecha_aprobado),NULL),
+        IF(base.estado_aprobado='pendiente',CURRENT_DATETIME('-05'),base.fecha_cierre)),
+        
+        DATE_TRUNC(base.fecha_aprobado, MONTH),DAY) + 1 AS dias_respuesta_oferta,
+
+  FROM base
+  LEFT JOIN (
+    SELECT nid, valor AS oportunidades_de_negocio_, fecha
+    FROM `papyrus-master.squad_bi_global.hubspot_historical`
+    WHERE propiedad = 'oportunidades_de_negocio_'
+      AND LOWER(TRIM(valor)) NOT IN ('inmueble aprobado','pendiente respuesta oferta','acepto oferta - pendiente firma','cierre - comprado')
+      AND nid IS NOT NULL
+      AND valor IS NOT NULL
+      AND fecha IS NOT NULL
+  ) hh ON hh.nid = base.nid AND hh.fecha >= base.fecha_aprobado
+  WHERE TRUE
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY base.fecha_aprobado,base.nid ORDER BY IF(base.estado_aprobado='rechazado',IFNULL(hh.fecha,base.fecha_aprobado),base.fecha_aprobado)) = 1
+),
+base_fechas AS (
+    SELECT 
+      DISTINCT 
+      SAFE_CAST(concat(EXTRACT(YEAR FROM fecha_aprobado),"-",EXTRACT(MONTH FROM fecha_aprobado),"-",dias_respuesta_oferta) AS DATE) AS fecha_cal,
+      DATE(DATE_TRUNC(fecha_aprobado, MONTH)) AS mes,
+      -- DATE(DATE_TRUNC(fecha_aprobado, DAY)) AS dia_1, 
+      dias_respuesta_oferta AS dia
+    FROM base_rechazos
+)
+    SELECT
+     'México' as pais,
+        *
+    FROM base_fechas AS bf
+    INNER JOIN base_rechazos AS br ON DATE_TRUNC(br.fecha_aprobado, MONTH) = bf.mes AND br.dias_respuesta_oferta <= bf.dia
+    WHERE TRUE
+     and mes BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY bf.mes,bf.dia, br.nid ORDER BY br.dias_respuesta_oferta DESC) = 1
+
+ORDER BY 1 DESC, 2 DESC, 3
+)
+
+
+,pre_cierres_oferta AS (
+      SELECT
+       a.pais,
+       a.mes,
+       a.estado_aprobado,
+       a.fecha_cal,
+      COUNT(DISTINCT a.nid) as total
+      FROM colombia_cvr_o_c AS a
+
+      GROUP BY 1,2,3,4
+
+      UNION ALL
+
+      SELECT 
+       a.pais,
+       a.mes,
+       a.estado_aprobado,
+       a.fecha_cal,
+       COUNT(DISTINCT a.nid) as total
+      FROM mexico_cvr_o_c AS a
+      GROUP BY 1,2,3,4
+)
+
+SELECT
+  *,
+LAG (a.mes,1) OVER(PARTITION BY a.mes,a.estado_aprobado,a.pais ORDER BY a.fecha_cal ASC) as mes_anterior,
+IF((LAG (a.mes,1) OVER(PARTITION BY a.mes,a.estado_aprobado,a.pais ORDER BY a.fecha_cal ASC))=a.mes,(LAG(a.total,1) OVER(PARTITION BY a.mes,a.estado_aprobado,a.pais ORDER BY a.mes,a.fecha_cal ASC)),0) as total_anterior,
+FROM
+pre_cierres_oferta AS a
+WHERE 1=1
+AND estado_aprobado IS NOT NULL
+) AS a ON  DATE(a.fecha_cal)=DATE(b.dia) AND LOWER(a.pais)=LOWER(b.pais)
+WHERE 1=1
+
+

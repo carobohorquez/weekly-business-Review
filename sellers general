@@ -12,7 +12,7 @@ WITH fechas AS (
       END AS periodo_de_tiempo
 
       FROM `papyrus-data.habi_wh.fechas` AS f
-      WHERE f.fecha BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+      WHERE f.fecha BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 12 MONTH) AND LAST_DAY(current_date())
       )
 
       SELECT
@@ -98,7 +98,12 @@ LEFT JOIN (
     'Colombia' AS pais,
     SUM(mc.check_registros_a_pricing) AS calificados_total,
   FROM `papyrus-data.habi_wh_bi.tabla_general_mkt` AS mc
-  WHERE mc.fecha_a_pricing IS NOT NULL
+  LEFT JOIN  `papyrus-data.habi_wh_bi.tabla_inmuebles_general`  AS g ON mc.inmueble_id = g.inmueble_id
+
+  WHERE 1=1
+  AND mc.fecha_a_pricing IS NOT NULL
+  AND SAFE_CAST(g.fuente_id AS INT64) IN (3,47)
+  AND  DATE_TRUNC(mc.fecha_de_creacion, MONTH) >= DATE_TRUNC(DATE_SUB(mc.fecha_a_pricing, INTERVAL 2 MONTH), MONTH)
   GROUP BY 1
 
   UNION ALL
@@ -115,13 +120,14 @@ LEFT JOIN (
    WHERE
     g.fuente_id IN (3,47,37,41)
     AND mm.fecha_a_pricing is not null
+    AND  DATE_TRUNC(mm.fecha_creacion, MONTH) >= DATE_TRUNC(DATE_SUB(mm.fecha_a_pricing, INTERVAL 3 MONTH), MONTH)
 
   GROUP BY 1,2
 ) AS a ON a.dia=b.dia AND a.pais=b.pais
 
 UNION ALL
 
--- 3. Leads Asignados --
+-- 3. Leads Asignados --------------------------------------------------------------------------------------------------------------------------------------------
 
 SELECT
 b.dia,
@@ -136,62 +142,116 @@ IFNULL(a.asignados_total,0),
 
 FROM base AS b
 LEFT JOIN (
-  SELECT
-  SAFE_CAST(IF(
-        t1.primer_asignacion<IFNULL(g.fecha_primer_precio_manual,g.fecha_a_pricing),
-        IFNULL(g.fecha_primer_precio_manual,g.fecha_a_pricing),
-        t1.primer_asignacion) AS DATE) AS dia,
-  'Colombia' AS pais,
+
+
+## leads asignados--> 1/1/12
+SELECT
+  -- SAFE_CAST(IF(
+  --       t1.primer_asignacion<IFNULL(g.fecha_primer_precio_manual,g.fecha_a_pricing),
+  --       IFNULL(g.fecha_primer_precio_manual,g.fecha_a_pricing),
+  --       t1.primer_asignacion) AS DATE) AS dia,
+  t1.primer_asignacion as dia,
+  'México' AS pais,
   COUNT(g.nid) AS asignados_total,
   FROM `papyrus-data-mx.habi_wh_bi.tabla_inmuebles_general` AS g
   LEFT JOIN(
-    SELECT h.nid,
-      MIN(h.fecha) AS primer_asignacion
-    FROM `papyrus-master.squad_bi_global.hubspot_historical` AS h
-    LEFT JOIN `papyrus-data.habi_wh_bi.sc_users_hubspot` AS sc ON h.valor = CAST(sc.id_segundario AS STRING)
-    WHERE h.propiedad = "hubspot_owner_id"
-      AND (IFNULL(sc.email, h.valor) like "%habi.%" OR IFNULL(sc.email, h.valor) like "%tucanton.%")
-      AND IFNULL(sc.email, h.valor) not like "%delta%"
-      AND IFNULL(sc.email, h.valor) not like "%call%"
-      AND IFNULL(sc.email, h.valor) not like "%agente%"
-      AND IFNULL(sc.email, h.valor) not like "%victorialechtig@tuhabi.mx%"
-      AND IFNULL(sc.email, h.valor) not like "%erickcastillo@tuhabi.mx%"
-      AND IFNULL(sc.email, h.valor) not like "%alejandroaguirre@habi.co%"
-      AND IFNULL(sc.email, h.valor) not like "%luisalvarez@tuhabi.mx%"
-    GROUP BY 1) AS t1 ON t1.nid = g.nid
-  GROUP BY 1
+  --       SELECT h.nid,
+  --   IFNULL(sc.email, h.valor) AS persona,
+  --   DATE(h.fecha) AS primer_asignacion,
+  --   hd.ask_price_comite_mx,
+  --   hd.internal_price_mx_prestamo,
+  --   hd.estado
+  --   FROM `papyrus-master.squad_bi_global.hubspot_historical` AS h
+  --   LEFT JOIN `papyrus-data.habi_wh_bi.sc_users_hubspot` AS sc ON h.valor = CAST(sc.id_segundario AS STRING)
+  --   LEFT JOIN `papyrus-data-mx.habi_wh_sellers.seller` AS s ON s.email=IFNULL(sc.email, h.valor)
+  --   LEFT JOIN `papyrus-master.squad_bi_global.hubspot_deal` AS hd ON hd.nid=h.nid
+  --   WHERE h.propiedad = "hubspot_owner_id"
+  --     /*AND (IFNULL(sc.email, h.valor) like "%habi.%" OR IFNULL(sc.email, h.valor) like "%tucanton.%")
+  --     AND IFNULL(sc.email, h.valor) not like "%delta%"
+  --     AND IFNULL(sc.email, h.valor) not like "%call%"
+  --     AND IFNULL(sc.email, h.valor) not like "%agente%"
+  --     AND IFNULL(sc.email, h.valor) not like "%victorialechtig@tuhabi.mx%"
+  --     AND IFNULL(sc.email, h.valor) not like "%erickcastillo@tuhabi.mx%"
+  --     AND IFNULL(sc.email, h.valor) not like "%alejandroaguirre@habi.co%"
+  --     AND IFNULL(sc.email, h.valor) not like "%luisalvarez@tuhabi.mx%"*/
+  --     AND IF(s.email IS NOT NULL OR h.valor like "%tucanton.%", TRUE, IFNULL(sc.email, h.valor) IN ('lauracruz@habi.co','alejandrobravo@habi.co','juanquinones@habi.co','juanarcos@habi.co') AND hd.contacto_digital IS NOT NULL)
+  --   QUALIFY ROW_NUMBER() OVER (PARTITION BY h.nid order by h.nid, primer_asignacion ASC)=1
+  --   ) AS t1 ON t1.nid = g.nid
+  --   LEFT JOIN `papyrus-master.sellers_comercial_global_dwh.sellers_marketing_global_dwh` as smg on smg.nid=g.nid
+  --   LEFT JOIN (
+  --   SELECT DISTINCT deal_id, state_id
+  --   FROM `papyrus-data-mx.habi_wh.history_state`
+  --   WHERE state_id = 63
+  --   AND deal_id IS NOT NULL
+  -- ) AS s63 ON s63.deal_id = g.id_negocio
 
-  UNION ALL
+  -- WHERE g.fecha_creacion IS NOT NULL
+  --   AND smg.check_registros_a_pricing = 1
+  --   AND g.nid IS NOT NULL
+  --   #AND LOWER(g.calificacion_del_lead_v2) NOT IN ("n","nh")
+  --   AND --(g.fecha_primer_precio_manual IS NOT NULL 
+  --   (t1.internal_price_mx_prestamo IS NOT NULL #OR s63.state_id IS NOT NULL 
+  --     OR t1.ask_price_comite_mx IS NOT NULL)
+  --   AND t1.estado IN ('Sin pricing incial', 'No gestionado', 'Cierre')
+  --   AND g.fecha_a_pricing IS NOT NULL
+  -- GROUP BY 1
 
-  SELECT
-  SAFE_CAST(IF(
-        t1.primer_asignacion<IFNULL(g.fecha_primer_precio_manual,g.fecha_a_pricing),
-        IFNULL(g.fecha_primer_precio_manual,g.fecha_a_pricing),
-        t1.primer_asignacion) AS DATE) AS dia,
-  'México' AS pais,
-  COUNT(g.nid) AS calificados_total,
-  FROM `papyrus-data.habi_wh_bi.tabla_inmuebles_general` AS g
-  LEFT JOIN(
-    SELECT h.nid,
-      MIN(h.fecha) AS primer_asignacion
-    FROM `papyrus-master.squad_bi_global.hubspot_historical` AS h
-    LEFT JOIN `papyrus-data.habi_wh_bi.sc_users_hubspot` AS sc ON h.valor = CAST(sc.id_segundario AS STRING)
-    WHERE h.propiedad = "hubspot_owner_id"
-      AND (IFNULL(sc.email, h.valor) like "%habi.%" OR IFNULL(sc.email, h.valor) like "%tucanton.%")
-      AND IFNULL(sc.email, h.valor) not like "%delta%"
-      AND IFNULL(sc.email, h.valor) not like "%call%"
-      AND IFNULL(sc.email, h.valor) not like "%agente%"
-      AND IFNULL(sc.email, h.valor) not like "%victorialechtig@tuhabi.mx%"
-      AND IFNULL(sc.email, h.valor) not like "%erickcastillo@tuhabi.mx%"
-      AND IFNULL(sc.email, h.valor) not like "%alejandroaguirre@habi.co%"
-      AND IFNULL(sc.email, h.valor) not like "%luisalvarez@tuhabi.mx%"
-    GROUP BY 1) AS t1 ON t1.nid = g.nid
-  GROUP BY 1
+  -- UNION ALL 
+
+  -- SELECT
+  -- -- SAFE_CAST(IF(
+  -- --       t1.primer_asignacion<IFNULL(g.fecha_primer_precio_manual,g.fecha_a_pricing),
+  -- --       IFNULL(g.fecha_primer_precio_manual,g.fecha_a_pricing),
+  -- --       t1.primer_asignacion) AS DATE) AS dia,
+  -- t1.primer_asignacion as dia,
+  -- 'Colombia' AS pais,
+  -- COUNT(g.nid) AS calificados_total,
+  -- FROM `papyrus-data.habi_wh_bi.tabla_inmuebles_general` AS g
+  -- LEFT JOIN `papyrus-master.sellers_comercial_global_dwh.sellers_marketing_global_dwh` as smg on smg.nid=g.nid
+  -- ## primera asignacion
+  -- LEFT JOIN(
+  --   SELECT h.nid,
+  --   IFNULL(sc.email, h.valor) AS persona,
+  --   DATE(h.fecha) AS primer_asignacion,
+  --   hd.precio_comite,
+  --   hd.internal_price
+  --   FROM `papyrus-master.squad_bi_global.hubspot_historical` AS h
+  --   LEFT JOIN `papyrus-data.habi_wh_bi.sc_users_hubspot` AS sc ON h.valor = CAST(sc.id_segundario AS STRING)
+  --   LEFT JOIN `papyrus-data.rds_aurora_habi_sellers.seller` AS s ON s.email=IFNULL(sc.email, h.valor)
+  --   LEFT JOIN `papyrus-master.squad_bi_global.hubspot_deal` AS hd ON hd.nid=h.nid
+  --   WHERE h.propiedad = "hubspot_owner_id"
+  --     /*AND (IFNULL(sc.email, h.valor) like "%habi.%" OR IFNULL(sc.email, h.valor) like "%tucanton.%")
+  --     AND IFNULL(sc.email, h.valor) not like "%delta%"
+  --     AND IFNULL(sc.email, h.valor) not like "%call%"
+  --     AND IFNULL(sc.email, h.valor) not like "%agente%"
+  --     AND IFNULL(sc.email, h.valor) not like "%victorialechtig@tuhabi.mx%"
+  --     AND IFNULL(sc.email, h.valor) not like "%erickcastillo@tuhabi.mx%"
+  --     AND IFNULL(sc.email, h.valor) not like "%alejandroaguirre@habi.co%"
+  --     AND IFNULL(sc.email, h.valor) not like "%luisalvarez@tuhabi.mx%" */
+  --     AND IF(s.email IS NOT NULL, TRUE, IFNULL(sc.email, h.valor) IN ('lauracruz@habi.co','alejandrobravo@habi.co','juanquinones@habi.co','juanarcos@habi.co') AND hd.contacto_digital IS NOT NULL)
+  --   QUALIFY ROW_NUMBER() OVER (PARTITION BY h.nid order by h.nid, primer_asignacion ASC)=1) AS t1 ON t1.nid = g.nid
+  -- ## leads en estado 63
+  -- LEFT JOIN (
+  --   SELECT DISTINCT negocio_id, estado_id
+  --   FROM `papyrus-data.habi_db.tabla_historico_estado_v2`
+  --   WHERE estado_id = 63
+  --   AND negocio_id IS NOT NULL
+  -- ) AS s63 ON s63.negocio_id = g.negocio_id
+
+  -- WHERE g.fecha_creacion IS NOT NULL
+  --   AND smg.check_registros_a_pricing = 1
+  --   AND g.nid IS NOT NULL
+  --   AND LOWER(g.calificacion_del_lead_v2) NOT IN ("n","nh")
+  --   AND --(g.fecha_primer_precio_manual IS NOT NULL 
+  --   (t1.internal_price IS NOT NULL OR s63.estado_id IS NOT NULL OR t1.precio_comite IS NOT NULL)
+  --   AND g.fecha_a_pricing IS NOT NULL
+
+    GROUP BY 1
 ) AS a ON a.dia=b.dia AND a.pais=b.pais
 
 UNION ALL    
 
--- 5. Ofertas aprobadas (inmubles aprobados)--
+-- 5. Ofertas aprobadas (inmubles aprobados)--------------------------------------------------------------------
 
 SELECT
 b.dia,
@@ -214,9 +274,12 @@ LEFT JOIN (
   FROM `papyrus-master.squad_bi_global.hubspot_historical`h
   INNER JOIN `papyrus-data.habi_wh_bi.tabla_inmuebles_general` ig ON ig.nid= h.nid
   WHERE propiedad = 'oportunidad_del_negocio'
-  AND lower(valor) = 'pendiente respuesta oferta'
-  AND SAFE_CAST(fecha AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
-  GROUP BY 1,2,3
+  -- AND lower(valor) = 'pendiente respuesta oferta'
+  -- AND LOWER(valor) IN ("acepto oferta - pendiente firma", "cierre - comprado")
+  AND TRIM(LOWER(valor)) IN ('inmueble aprobado')
+  AND SAFE_CAST(fecha AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 12 MONTH) AND LAST_DAY(current_date())
+  QUALIFY ROW_NUMBER() OVER(PARTITION BY h.nid, DATE_TRUNC(fecha,MONTH) ORDER BY fecha ASC)=1
+  -- GROUP BY 1,2,3
 
   UNION ALL  
 
@@ -228,9 +291,12 @@ LEFT JOIN (
   FROM `papyrus-master.squad_bi_global.hubspot_historical`h
   INNER JOIN `papyrus-data-mx.habi_wh_bi.tabla_inmuebles_general` ig ON ig.nid= h.nid
   WHERE propiedad = 'oportunidades_de_negocio_'
-  AND lower(valor) = 'pendiente respuesta oferta'
-  AND SAFE_CAST(fecha AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
-  GROUP BY 1,2,3
+  -- AND lower(valor) = 'pendiente respuesta oferta'
+  --  AND LOWER(valor) IN ("acepto oferta - pendiente firma", "cierre - comprado")
+  AND TRIM(LOWER(valor))= 'inmueble aprobado'
+  AND SAFE_CAST(fecha AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 12 MONTH) AND LAST_DAY(current_date())
+  QUALIFY ROW_NUMBER() OVER(PARTITION BY h.nid, DATE_TRUNC(fecha,MONTH) ORDER BY fecha ASC)=1
+  -- GROUP BY 1,2,3
 ) AS a ON a.dia=b.dia AND a.pais=b.pais
 GROUP BY 1,2,3,4,5,6
 
@@ -259,10 +325,14 @@ LEFT JOIN (
   FROM `papyrus-master.squad_bi_global.hubspot_historical`h
   INNER JOIN `papyrus-data.habi_wh_bi.tabla_inmuebles_general` ig ON ig.nid= h.nid
   WHERE propiedad = 'oportunidad_del_negocio'
-    AND LOWER(valor)IN ('pre-comite', 'pre-comité')
+  AND TRIM(LOWER(valor)) IN ('pre-comite validado','pre-comité validado',	'pre-comité validado')
+ 
+    -- AND LOWER(valor)IN ('pre-comite', 'pre-comité')
     -- AND lower(valor) IN ('aprobación comité final', 'aprobación comité  final')
-  AND SAFE_CAST(fecha AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
-  GROUP BY 1,2,3
+  AND SAFE_CAST(fecha AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 12 MONTH) AND LAST_DAY(current_date())
+  QUALIFY ROW_NUMBER() OVER(PARTITION BY h.nid, DATE_TRUNC(fecha,MONTH) ORDER BY fecha ASC)=1
+
+  -- GROUP BY 1,2,3
 
   UNION ALL  
 
@@ -274,10 +344,71 @@ LEFT JOIN (
   FROM `papyrus-master.squad_bi_global.hubspot_historical`h
   INNER JOIN `papyrus-data-mx.habi_wh_bi.tabla_inmuebles_general` ig ON ig.nid= h.nid
   WHERE propiedad = 'oportunidades_de_negocio_'
-  AND LOWER(valor)IN ('pre-comite', 'pre-comité')
+  -- AND LOWER(valor)IN ('pre-comite', 'pre-comité')
+  --  AND DATE_TRUNC(fecha,MONTH)='2023-11-01'
+   AND TRIM(LOWER(valor)) IN ('pre-comite validado','pre-comité validado',	'pre-comité validado')
   -- AND lower(valor) IN ('aprobacion comite final', 'aprobación comité  final')
-  AND SAFE_CAST(fecha AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
-  GROUP BY 1,2,3
+  AND SAFE_CAST(fecha AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 12 MONTH) AND LAST_DAY(current_date())
+  QUALIFY ROW_NUMBER() OVER(PARTITION BY h.nid, DATE_TRUNC(fecha,MONTH) ORDER BY fecha ASC)=1
+  -- GROUP BY 1,2,3
+) AS a ON a.dia=b.dia AND a.pais=b.pais
+GROUP BY 1,2,3,4,5,6
+
+UNION ALL
+--- CIERES HUBSPOT: 
+SELECT
+b.dia,
+b.semana,
+b.mes,
+b.numero_dia_semana,
+b.numero_dia_mes,
+b.pais,
+'sellers',
+'cierres operacion',
+COUNT(DISTINCT a.valor)
+
+FROM base AS b
+LEFT JOIN (
+  SELECT 
+  DISTINCT
+  SAFE_CAST(closedate AS DATE) AS dia, 
+  'Colombia' AS pais, 
+  h.nid AS valor, 
+  FROM `papyrus-master.squad_bi_global.hubspot_historical`h
+  INNER JOIN `papyrus-data.habi_wh_bi.tabla_inmuebles_general` ig ON ig.nid= h.nid
+  LEFT JOIN `papyrus-master.squad_bi_global.hubspot_deal`  as hd ON h.nid=hd.nid
+  WHERE 1=1 
+  AND propiedad = 'oportunidad_del_negocio'
+  AND TRIM(LOWER(valor)) IN ('cierre - comprado')
+  AND SAFE_CAST(fecha AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 12 MONTH) AND LAST_DAY(current_date())
+  AND  DATE_TRUNC(closedate, MONTH)='2023-11-01'
+  AND closedate IS NOT NULL
+  AND TRIM(LOWER(hd.oportunidad_del_negocio))='cierre - comprado'
+  QUALIFY ROW_NUMBER() OVER(PARTITION BY h.nid, DATE_TRUNC(fecha, MONTH) ORDER BY fecha  DESC)=1
+
+  -- GROUP BY 1,2,3
+
+  UNION ALL  
+
+  SELECT 
+
+  DISTINCT
+  SAFE_CAST(closedate AS DATE) AS dia, 
+  'México' AS pais, 
+  h.nid AS valor, 
+  FROM `papyrus-master.squad_bi_global.hubspot_historical`h
+  INNER JOIN `papyrus-data-mx.habi_wh_bi.tabla_inmuebles_general` ig ON ig.nid= h.nid
+  LEFT JOIN `papyrus-master.squad_bi_global.hubspot_deal`  as hd ON h.nid=hd.nid
+  WHERE 1=1 
+  AND propiedad = 'oportunidades_de_negocio_'
+  AND TRIM(LOWER(valor)) IN ('cierre - comprado')
+  AND SAFE_CAST(closedate AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 12 MONTH) AND LAST_DAY(current_date())
+  AND closedate IS NOT NULL
+  AND DATE_TRUNC(closedate, MONTH)='2023-11-01'
+  AND TRIM(LOWER(hd.oportunidades_de_negocio_))='cierre - comprado'
+  QUALIFY ROW_NUMBER() OVER(PARTITION BY h.nid, DATE_TRUNC(closedate, MONTH) ORDER BY fecha  DESC)=1
+
+  -- GROUP BY 1,2,3
 ) AS a ON a.dia=b.dia AND a.pais=b.pais
 GROUP BY 1,2,3,4,5,6
 
@@ -483,7 +614,7 @@ LEFT JOIN (
   SAFE_CAST(bi.v_fecha_escritura AS DATE) AS dia,
   bi.nid
   FROM `papyrus-master.dm_habi_co_dwh_bi.operacion_general_co_bi` AS bi
-  WHERE SAFE_CAST(bi.v_fecha_escritura AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date()) 
+  WHERE SAFE_CAST(bi.v_fecha_escritura AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 12 MONTH) AND LAST_DAY(current_date()) 
 
   UNION ALL  
 
@@ -495,7 +626,7 @@ LEFT JOIN (
   FROM `papyrus-master.operations_sellers_mx_stg.stg_sellers_cierres_y_precierres_mx_dwh` AS bi
   WHERE bi.v_nombre_fase_actual_pipe_poder_notarial_tramites IS NOT NULL
   AND bi.v_nombre_fase_actual_pipe_poder_notarial_tramites<>'Desistimientos'
-  AND SAFE_CAST(v_fecha_poder_escritura AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())  
+  AND SAFE_CAST(v_fecha_poder_escritura AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 12 MONTH) AND LAST_DAY(current_date())  
 ) AS a ON a.dia=b.dia AND a.pais=b.pais
 GROUP BY 1,2,3,4,5,6,7
 
@@ -518,7 +649,7 @@ LEFT JOIN (
   SAFE_CAST(bi.r_fecha_tentativa_escritura AS DATE) AS dia,
   bi.nid
   FROM `papyrus-master.dm_habi_co_dwh_bi.operacion_general_co_bi` AS bi
-  WHERE SAFE_CAST(bi.r_fecha_tentativa_escritura AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date()) 
+  WHERE SAFE_CAST(bi.r_fecha_tentativa_escritura AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 12 MONTH) AND LAST_DAY(current_date()) 
 
   UNION ALL      
 
@@ -530,7 +661,7 @@ LEFT JOIN (
   FROM `papyrus-master.operations_sellers_mx_stg.stg_sellers_cierres_y_precierres_mx_dwh` AS bi
   WHERE bi.v_nombre_fase_actual_pipe_poder_notarial_tramites IS NOT NULL
   AND bi.v_nombre_fase_actual_pipe_poder_notarial_tramites<>'Desistimientos'
-  AND SAFE_CAST(bi.v_fecha_tentativa_de_escrituracion_interna AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date()) 
+  AND SAFE_CAST(bi.v_fecha_tentativa_de_escrituracion_interna AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 12 MONTH) AND LAST_DAY(current_date()) 
 ) AS a ON a.dia=b.dia AND a.pais=b.pais
 GROUP BY 1,2,3,4,5,6,7
 
@@ -555,7 +686,7 @@ LEFT JOIN (
   bi.r_fecha_tentativa_escritura,
   bi.v_fecha_escritura AS dia,
   FROM `papyrus-master.dm_habi_co_dwh_bi.operacion_general_co_bi` AS bi
-  WHERE  SAFE_CAST(bi.v_fecha_escritura  AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+  WHERE  SAFE_CAST(bi.v_fecha_escritura  AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 12 MONTH) AND LAST_DAY(current_date())
 
   UNION ALL
 
@@ -568,7 +699,7 @@ LEFT JOIN (
   FROM `papyrus-master.operations_sellers_mx_stg.stg_sellers_cierres_y_precierres_mx_dwh` AS bi
   WHERE bi.v_nombre_fase_actual_pipe_poder_notarial_tramites IS NOT NULL
   AND bi.v_nombre_fase_actual_pipe_poder_notarial_tramites<>'Desistimientos'
-  AND SAFE_CAST(bi.v_fecha_poder_escritura AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+  AND SAFE_CAST(bi.v_fecha_poder_escritura AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 12 MONTH) AND LAST_DAY(current_date())
 ) AS a ON a.dia=b.dia AND a.pais=b.pais
 WHERE DATE_TRUNC(a.v_fecha_promesa,MONTH) < b.mes
   AND DATE_TRUNC(a.r_fecha_tentativa_escritura,MONTH) = b.mes
@@ -596,7 +727,7 @@ LEFT JOIN (
   bi.r_fecha_tentativa_escritura,
   bi.v_fecha_escritura AS dia,
   FROM `papyrus-master.dm_habi_co_dwh_bi.operacion_general_co_bi` AS bi
-  WHERE  SAFE_CAST(bi.v_fecha_escritura  AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+  WHERE  SAFE_CAST(bi.v_fecha_escritura  AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 12 MONTH) AND LAST_DAY(current_date())
 
   UNION ALL
 
@@ -609,7 +740,7 @@ LEFT JOIN (
   FROM `papyrus-master.operations_sellers_mx_stg.stg_sellers_cierres_y_precierres_mx_dwh` AS bi
   WHERE bi.v_nombre_fase_actual_pipe_poder_notarial_tramites IS NOT NULL
   AND bi.v_nombre_fase_actual_pipe_poder_notarial_tramites<>'Desistimientos'
-  AND SAFE_CAST(bi.v_fecha_poder_escritura AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+  AND SAFE_CAST(bi.v_fecha_poder_escritura AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 12 MONTH) AND LAST_DAY(current_date())
 ) AS a ON a.dia=b.dia AND a.pais=b.pais
 WHERE DATE_TRUNC(a.v_fecha_promesa,MONTH) < b.mes
   AND DATE_TRUNC(a.r_fecha_tentativa_escritura,MONTH) < b.mes
@@ -637,7 +768,7 @@ LEFT JOIN (
   bi.r_fecha_tentativa_escritura,
   bi.v_fecha_escritura AS dia,
   FROM `papyrus-master.dm_habi_co_dwh_bi.operacion_general_co_bi` AS bi
-  WHERE  SAFE_CAST(bi.v_fecha_escritura  AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+  WHERE  SAFE_CAST(bi.v_fecha_escritura  AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 12 MONTH) AND LAST_DAY(current_date())
 
   UNION ALL
 
@@ -650,7 +781,7 @@ LEFT JOIN (
   FROM `papyrus-master.operations_sellers_mx_stg.stg_sellers_cierres_y_precierres_mx_dwh` AS bi
   WHERE bi.v_nombre_fase_actual_pipe_poder_notarial_tramites IS NOT NULL
   AND bi.v_nombre_fase_actual_pipe_poder_notarial_tramites<>'Desistimientos'
-  AND SAFE_CAST(bi.v_fecha_poder_escritura AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+  AND SAFE_CAST(bi.v_fecha_poder_escritura AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 12 MONTH) AND LAST_DAY(current_date())
 ) AS a ON a.dia=b.dia AND a.pais=b.pais
 WHERE DATE_TRUNC(a.v_fecha_promesa,MONTH) < b.mes
   AND DATE_TRUNC(a.r_fecha_tentativa_escritura,MONTH) > b.mes
@@ -678,7 +809,7 @@ LEFT JOIN (
   bi.r_fecha_tentativa_escritura,
   bi.v_fecha_escritura AS dia,
   FROM `papyrus-master.dm_habi_co_dwh_bi.operacion_general_co_bi` AS bi
-  WHERE  SAFE_CAST(bi.v_fecha_escritura  AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+  WHERE  SAFE_CAST(bi.v_fecha_escritura  AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 12 MONTH) AND LAST_DAY(current_date())
 
   UNION ALL
 
@@ -691,7 +822,7 @@ LEFT JOIN (
   FROM `papyrus-master.operations_sellers_mx_stg.stg_sellers_cierres_y_precierres_mx_dwh` AS bi
   WHERE bi.v_nombre_fase_actual_pipe_poder_notarial_tramites IS NOT NULL
   AND bi.v_nombre_fase_actual_pipe_poder_notarial_tramites<>'Desistimientos'
-  AND SAFE_CAST(bi.v_fecha_poder_escritura AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+  AND SAFE_CAST(bi.v_fecha_poder_escritura AS DATE) BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 12 MONTH) AND LAST_DAY(current_date())
 ) AS a ON a.dia=b.dia AND a.pais=b.pais
 WHERE DATE_TRUNC(a.v_fecha_promesa,MONTH) = b.mes
   AND DATE_TRUNC(a.dia,MONTH) = b.mes
@@ -931,7 +1062,7 @@ base_fechas AS (
     FROM base_fechas AS bf
     INNER JOIN base_rechazos AS br ON DATE_TRUNC(br.fecha_aprobado, MONTH) = bf.mes AND br.dias_respuesta_oferta <= bf.dia
     WHERE TRUE
-   AND bf.mes BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+   AND bf.mes BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 12 MONTH) AND LAST_DAY(current_date())
     QUALIFY ROW_NUMBER() OVER (PARTITION BY bf.mes,bf.dia, br.nid ORDER BY br.dias_respuesta_oferta DESC) = 1
 )
 
@@ -1046,7 +1177,7 @@ base_fechas AS (
     FROM base_fechas AS bf
     INNER JOIN base_rechazos AS br ON DATE_TRUNC(br.fecha_aprobado, MONTH) = bf.mes AND br.dias_respuesta_oferta <= bf.dia
     WHERE TRUE
-     and mes BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 1 MONTH) AND LAST_DAY(current_date())
+     and mes BETWEEN DATE_SUB(DATE_TRUNC(CURRENT_DATE(),MONTH),INTERVAL 12 MONTH) AND LAST_DAY(current_date())
 
     QUALIFY ROW_NUMBER() OVER (PARTITION BY bf.mes,bf.dia, br.nid ORDER BY br.dias_respuesta_oferta DESC) = 1
 
